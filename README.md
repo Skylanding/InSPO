@@ -244,12 +244,10 @@ bash run_arena_hard.sh
 If you use InSPO in your research, please cite:
 
 ```bibtex
-@article{Li2025InSPOUI,
-  title={InSPO: Unlocking Intrinsic Self-Reflection for LLM Preference Optimization},
-  author={Yu Li and Tian Lan and Zhengling Qi},
-  journal={ArXiv},
-  year={2025},
-  volume={abs/2512.23126},
-  url={https://api.semanticscholar.org/CorpusID:284312139}
+@article{li2025inspo,
+  title={Inspo: Unlocking intrinsic self-reflection for llm preference optimization},
+  author={Li, Yu and Lan, Tian and Qi, Zhengling},
+  journal={arXiv preprint arXiv:2512.23126},
+  year={2025}
 }
 ```
