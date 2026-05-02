@@ -6,14 +6,14 @@
 </h3>
 
 
-<p align="center">
+<!-- <p align="center">
   <a href="https://arxiv.org/abs/2512.23126">
     <img src="https://img.shields.io/badge/arXiv-Paper-red?style=flat-square&logo=arxiv" alt="arXiv Paper"></a>
   &nbsp;
   <a href="https://github.com/Skylanding/InsPO">
     <img src="https://img.shields.io/badge/GitHub-Project-181717?style=flat-square&logo=github" alt="GitHub Project"></a>
 </p>
-
+ -->
 
 ## 🌼 Abstract
 
