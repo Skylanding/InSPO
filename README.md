@@ -237,17 +237,3 @@ python alpaca_eval_official.py \
 cd simposhell/eval/arena-hard-auto
 bash run_arena_hard.sh
 ```
-
-
-## 📄 Citation
-
-If you use InSPO in your research, please cite:
-
-```bibtex
-@article{li2025inspo,
-  title={Inspo: Unlocking intrinsic self-reflection for llm preference optimization},
-  author={Li, Yu and Lan, Tian and Qi, Zhengling},
-  journal={arXiv preprint arXiv:2512.23126},
-  year={2025}
-}
-```
