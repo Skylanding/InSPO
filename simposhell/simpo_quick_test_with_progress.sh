@@ -1,43 +1,42 @@
 #!/bin/bash
-# SimPO Instruct Setup 快速测试版本 - 带详细进度显示
-# 使用少量prompts验证完整流程
+# SimPO Instruct Setup - Quick test with progress
+# Validates full pipeline with a small number of prompts
 
 set -x
 
 echo "=========================================="
-echo "🧪 SimPO Instruct Setup 快速测试"
+echo "🧪 SimPO Instruct Setup Quick Test"
 echo "=========================================="
 
-# 设置参数
+# Parameters
 SFT_MODEL="/home/ubuntu/basemodels/llama3/llama3-8b-instruct"
 OUTPUT_DIR="/home/ubuntu/rrhf/ultrafeedback_onpolicy_test"
 REWARD_MODEL="llm-blender/PairRM"
 
-# 使用5个seeds（对应5个响应）
+# 5 seeds (one response per seed)
 SEEDS=(13 21 42 79 100)
 
-echo "📋 测试配置："
-echo "   SFT模型: $SFT_MODEL"
-echo "   输出目录: $OUTPUT_DIR"
-echo "   奖励模型: $REWARD_MODEL"
+echo "📋 Test config:"
+echo "   SFT model: $SFT_MODEL"
+echo "   Output dir: $OUTPUT_DIR"
+echo "   Reward model: $REWARD_MODEL"
 echo "   Seeds: ${SEEDS[@]}"
-echo "   Prompts数量: 5 (测试用)"
+echo "   Prompts: 5 (test)"
 echo ""
 
-# 创建测试目录
+# Create test directory
 mkdir -p $OUTPUT_DIR
 
 echo "=========================================="
-echo "📝 步骤1: 生成5个不同响应"
+echo "📝 Step 1: Generate 5 different responses"
 echo "=========================================="
-echo "📌 说明: 为5个prompts生成5个不同响应"
+echo "📌 Generating 5 responses for 5 prompts"
 echo ""
 
-# 为每个seed生成响应
 for i in "${!SEEDS[@]}"; do
     seed=${SEEDS[$i]}
     step_num=$((i + 1))
-    echo "🔄 进度: $step_num/5 - 生成seed=$seed的响应..."
+    echo "🔄 Progress: $step_num/5 - Generating responses for seed=$seed..."
     
     source ~/miniconda3/etc/profile.d/conda.sh && conda activate handbook && python /home/ubuntu/Open/rrhf/simpo_decode_final.py \
         --model $SFT_MODEL \
@@ -49,43 +48,43 @@ for i in "${!SEEDS[@]}"; do
         --max_prompts 5
     
     if [ $? -eq 0 ]; then
-        echo "✅ seed=$seed 响应生成完成"
+        echo "✅ seed=$seed response generation complete"
         if [ -f "$OUTPUT_DIR/output_$seed.json" ]; then
-            echo "📊 生成了 $(jq length $OUTPUT_DIR/output_$seed.json) 个响应"
+            echo "📊 Generated $(jq length $OUTPUT_DIR/output_$seed.json) responses"
         fi
     else
-        echo "❌ seed=$seed 响应生成失败"
+        echo "❌ seed=$seed response generation failed"
         exit 1
     fi
     echo ""
 done
 
 echo "=========================================="
-echo "📝 步骤2: 后处理生成结果"
+echo "📝 Step 2: Post-process generated results"
 echo "=========================================="
-echo "📌 说明: 合并5个响应文件，过滤相同响应"
+echo "📌 Merging 5 response files, filtering duplicates"
 echo ""
 
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate handbook && python /home/ubuntu/Open/rrhf/simpo_post_process.py \
     --generation_file_dir $OUTPUT_DIR
 
 if [ $? -eq 0 ]; then
-    echo "✅ 后处理完成"
+    echo "✅ Post-processing complete"
     if [ -f "$OUTPUT_DIR/all_outputs.json" ]; then
-        echo "📊 后处理结果: $(jq length $OUTPUT_DIR/all_outputs.json) 个样本"
-        echo "📄 后处理结果预览："
+        echo "📊 Post-processed: $(jq length $OUTPUT_DIR/all_outputs.json) samples"
+        echo "📄 Post-processing result preview:"
         head -n 5 $OUTPUT_DIR/all_outputs.json
     fi
 else
-    echo "❌ 后处理失败"
+    echo "❌ Post-processing failed"
     exit 1
 fi
 echo ""
 
 echo "=========================================="
-echo "📝 步骤3: 使用PairRM奖励模型进行偏好标注"
+echo "📝 Step 3: Preference annotation with PairRM reward model"
 echo "=========================================="
-echo "📌 说明: 使用PairRM对5个响应评分，选择最高分和最低分"
+echo "📌 Scoring 5 responses with PairRM, selecting best and worst"
 echo ""
 
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate handbook && python /home/ubuntu/Open/rrhf/simpo_reward_annotate_no_datasets.py \
@@ -94,22 +93,22 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda activate handbook && python 
     --output_dir $OUTPUT_DIR
 
 if [ $? -eq 0 ]; then
-    echo "✅ 奖励模型标注完成"
+    echo "✅ Reward model annotation complete"
     if [ -f "$OUTPUT_DIR/all_outputs_bin.json" ]; then
-        echo "📊 标注结果: $(jq length $OUTPUT_DIR/all_outputs_bin.json) 个偏好对"
-        echo "📄 标注结果预览："
+        echo "📊 Annotated: $(jq length $OUTPUT_DIR/all_outputs_bin.json) preference pairs"
+        echo "📄 Annotation result preview:"
         head -n 5 $OUTPUT_DIR/all_outputs_bin.json
     fi
 else
-    echo "❌ 奖励模型标注失败"
+    echo "❌ Reward model annotation failed"
     exit 1
 fi
 echo ""
 
 echo "=========================================="
-echo "📝 步骤4: 转换为DPO训练格式"
+echo "📝 Step 4: Convert to DPO training format"
 echo "=========================================="
-echo "📌 说明: 转换为DPO训练所需的JSONL格式"
+echo "📌 Converting to DPO JSONL format"
 echo ""
 
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate handbook && python /home/ubuntu/Open/rrhf/convert_to_dpo_format.py \
@@ -117,23 +116,23 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda activate handbook && python 
     --output_file $OUTPUT_DIR/test_dpo.jsonl
 
 if [ $? -eq 0 ]; then
-    echo "✅ DPO格式转换完成"
+    echo "✅ DPO format conversion complete"
     if [ -f "$OUTPUT_DIR/test_dpo.jsonl" ]; then
-        echo "📊 DPO格式数据: $(wc -l < $OUTPUT_DIR/test_dpo.jsonl) 个偏好对"
-        echo "📄 DPO格式数据样本："
+        echo "📊 DPO data: $(wc -l < $OUTPUT_DIR/test_dpo.jsonl) preference pairs"
+        echo "📄 DPO data sample:"
         head -n 2 $OUTPUT_DIR/test_dpo.jsonl
     fi
 else
-    echo "❌ DPO格式转换失败"
+    echo "❌ DPO format conversion failed"
     exit 1
 fi
 echo ""
 
 echo "=========================================="
-echo "🎉 SimPO快速测试完成！"
+echo "🎉 SimPO Quick Test Complete!"
 echo "=========================================="
-echo "📁 测试结果保存在: $OUTPUT_DIR"
-echo "📊 最终文件列表："
+echo "📁 Test results saved in: $OUTPUT_DIR"
+echo "📊 Final file listing:"
 ls -la $OUTPUT_DIR/
 echo ""
-echo "✅ 快速测试成功！可以运行完整流程了。"
+echo "✅ Quick test passed! Ready to run full pipeline."

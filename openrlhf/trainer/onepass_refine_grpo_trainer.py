@@ -12,21 +12,21 @@ from .grpo_trainer import GRPOTrainer, GRPOConfig
 
 class OnePassRefineConfig(GRPOConfig):
     """
-    训练期两次采样（y1,y2），推理期一次采样（仅 x->y）。
+    Two-stage sampling during training (y1,y2), single-pass sampling during inference (x->y only).
     """
     def __init__(
         self,
-        draft_source: str = "ref",            # {"ref","old","current"} 生成 y1 的来源
-        num_refinements_per_prompt: int = 4,  # 每个 prompt 的 y2 数量 (组内归一)
-        use_sequence_level_is: bool = True,   # y2 段序列级 log-ratio
+        draft_source: str = "ref",            # {"ref","old","current"} source for generating y1
+        num_refinements_per_prompt: int = 4,  # number of y2 per prompt (group-normalized)
+        use_sequence_level_is: bool = True,   # y2 segment sequence-level log-ratio
         clip_ratio_max: float = 2.0,
         kl_on_y2_only: bool = True,
 
-        # 可选：负样本下压 (y1 作为"拒绝")
+        # Optional: negative draft push (y1 as rejection)
         use_negative_draft_push: bool = False,
-        neg_push_coef: float = 0.25,          # policy 梯度系数（相对 ΔR 的比例）
+        neg_push_coef: float = 0.25,          # policy gradient coefficient (relative to ΔR)
 
-        # 可选：一致性 KL（训练期额外一次前向）
+        # Optional: consistency KL (extra forward pass during training)
         use_consistency_kl: bool = False,
         consistency_kl_coef: float = 0.1,
 
@@ -46,9 +46,9 @@ class OnePassRefineConfig(GRPOConfig):
 
 class OnePassRefineGRPOTrainer(GRPOTrainer):
     """
-    与 RefineGRPOTrainer 的区别：
-    - 采样仍是 x->y1->y2，但优化的是 π(y|x)，即用 [x||y2] 做前向与更新；
-    - 因此推理只需一次采样（x->y）。
+    Differs from RefineGRPOTrainer:
+    - Sampling is still x->y1->y2, but optimizes π(y|x), using [x||y2] for forward and update;
+    - Hence inference only needs single-pass sampling (x->y).
     """
     def __init__(self,
                  grader: BaseGrader,
@@ -57,7 +57,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         assert isinstance(self.config, OnePassRefineConfig), "Use OnePassRefineConfig for OnePassRefineGRPOTrainer."
         self.grader = grader
 
-    # ---------- 采样：生成 y1 ----------
+    # ---------- Sampling: generate y1 ----------
     @torch.no_grad()
     def _gen_drafts(self, prompts: List[str]) -> List[str]:
         src = self.ref_model if self.config.draft_source in ("ref","old") else self.model
@@ -72,9 +72,9 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
                            eos_token_id=self.tokenizer.eos_token_id)
         cut = enc['input_ids'].shape[1]
         texts = self.tokenizer.batch_decode(out[:, cut:], skip_special_tokens=True)
-        return texts  # [B] 的 y1
+        return texts  # [B] y1 drafts
 
-    # ---------- 采样：在 (x,y1) 上生成多个 y2 ----------
+    # ---------- Sampling: generate multiple y2 from (x,y1) ----------
     @torch.no_grad()
     def _gen_refinements(self, prompts: List[str], drafts: List[str]) -> List[List[str]]:
         cond = [p + d for p, d in zip(prompts, drafts)]
@@ -93,7 +93,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         B = len(prompts); G = self.config.num_refinements_per_prompt
         return [texts[i*G:(i+1)*G] for i in range(B)]  # [B][G]
 
-    # ---------- 评分：ΔR ----------
+    # ---------- Scoring: ΔR ----------
     def _compute_delta_rewards(self, prompts: List[str], drafts: List[str], y2_groups: List[List[str]]) -> List[List[float]]:
         base_scores = self.grader.score_base_batch(prompts, drafts)  # len B
         all_deltas = []
@@ -103,7 +103,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
             all_deltas.append(deltas)
         return all_deltas
 
-    # ---------- 打包（关键差异）：用 [x||y2] 做训练 ----------
+    # ---------- Packing (key difference): use [x||y2] for training ----------
     def _pack_onepass(self,
                       prompts: List[str],
                       y2_groups: List[List[str]],
@@ -122,7 +122,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
                 attn = enc["attention_mask"].squeeze(0)
 
                 loss_mask = torch.zeros_like(ids)
-                start, end = px, ids.numel()  # 仅 y2 段
+                start, end = px, ids.numel()  # y2 segment only
                 if end > start:
                     loss_mask[start:end] = 1
 
@@ -135,7 +135,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         labels_full = pad_sequence(labels_list, batch_first=True, padding_value=pad_id).to(self.model.device)
         advantages = torch.tensor(adv_list, dtype=torch.float32, device=self.model.device)
 
-        # 自回归对齐
+        # Autoregressive alignment
         inputs_shift = input_ids[:, :-1]
         attn_shift = attention_mask[:, 1:]
         labels = labels_full[:, 1:]
@@ -143,7 +143,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
 
         return inputs_shift, attn_shift, labels, loss_mask, advantages
 
-    # ---------- y2-only 损失（在 [x||y2] 上；序列级 IS + KL@ref） ----------
+    # ---------- y2-only loss (on [x||y2]; sequence-level IS + KL@ref) ----------
     def _compute_y2_loss(self,
                          logits: torch.Tensor, ref_logits: torch.Tensor,
                          labels: torch.Tensor, loss_mask: torch.Tensor,
@@ -171,7 +171,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
             adv = (advantages * self.config.gamma).unsqueeze(-1).expand_as(ratio)
             policy_loss = -(ratio * adv * loss_mask).sum() / active
 
-        # KL（仅 y2 段）
+        # KL (y2 segment only)
         p = torch.exp(logp)
         kl_t = (p * (logp - logq)).sum(dim=-1) * loss_mask
         if self.config.loss_type in ("dapo", "bnpo"):
@@ -185,7 +185,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         total = policy_loss + self.config.beta * kl_loss
         return total, policy_loss.detach(), kl_loss.detach()
 
-    # ---------- 可选：负样本下压（在 [x||y1] 上，优势为 -neg_coef*ΔR） ----------
+    # ---------- Optional: negative draft push (on [x||y1], advantage = -neg_coef*ΔR) ----------
     def _neg_push_loss(self,
                        prompts: List[str],
                        drafts: List[str],
@@ -193,7 +193,7 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         if not self.config.use_negative_draft_push:
             return None
 
-        # 取每组的平均 ΔR（也可取 max ΔR），作为 y1 的负优势权重
+        # Use mean ΔR of each group as negative advantage weight for y1
         neg_adv = []
         ids_list, attn_list, mask_list, labels_list = [], [], [], []
         pad_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
@@ -239,10 +239,10 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         total, _, _ = self._compute_y2_loss(logits, ref_logits, labels, loss_mask, advantages)
         return total
 
-    # ---------- 可选：一致性 KL（在 y2 段，π(·|x) vs π(·|x,y1) ） ----------
+    # ---------- Optional: consistency KL (y2 segment, π(·|x) vs π(·|x,y1)) ----------
     @torch.no_grad()
     def _teacher_logits_xy1(self, prompts: List[str], drafts: List[str], y2_groups: List[List[str]]):
-        # 构建 [x||y1||y2] 的 teacher logits（不回传梯度）
+        # Build [x||y1||y2] teacher logits (no gradient)
         pad_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
         ids_list, attn_list = [], []
         for x, y1, y2s in zip(prompts, drafts, y2_groups):
@@ -255,12 +255,12 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         attention_mask = pad_sequence(attn_list, batch_first=True, padding_value=0).to(self.model.device)
         inputs_shift = input_ids[:, :-1]; attn_shift = attention_mask[:, 1:]
         teacher = self.model(input_ids=inputs_shift, attention_mask=attn_shift).logits.detach()
-        return teacher, input_ids  # logits@xy1, 用于对齐 y2 区间
+        return teacher, input_ids  # logits@xy1, for aligning y2 segment
 
     def train_step(self, batch: Dict[str, Any]) -> Dict[str, float]:
         self.model.train()
 
-        # 读取 prompts
+        # Read prompts
         if isinstance(batch, list) and "prompt" in batch[0]:
             prompts = [b["prompt"] for b in batch]
         elif "prompt" in batch:
@@ -270,11 +270,11 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
         else:
             raise ValueError("Batch must contain 'prompt' or 'input_ids'.")
 
-        # 采样 y1 与 y2
+        # Sample y1 and y2
         drafts = self._gen_drafts(prompts)                         # [B]
         y2_groups = self._gen_refinements(prompts, drafts)         # [B][G]
 
-        # 评分 ΔR，并组内归一
+        # Score ΔR and normalize within group
         deltas = self._compute_delta_rewards(prompts, drafts, y2_groups)
         normed = []
         for ds in deltas:
@@ -290,42 +290,41 @@ class OnePassRefineGRPOTrainer(GRPOTrainer):
                 arr = np.clip(arr, lo, hi)
             normed.append(arr.tolist())
 
-        # 打包为 [x||y2]（关键差异）
+        # Pack as [x||y2] (key difference)
         inputs_shift, attn_shift, labels, loss_mask, advantages = self._pack_onepass(prompts, y2_groups, normed)
 
-        # 前向（current/ref）——一遍式上下文
+        # Forward (current/ref) -- one-pass context
         out = self.model(input_ids=inputs_shift, attention_mask=attn_shift)
         logits = out.logits
         with torch.no_grad():
             ref_out = self.ref_model(input_ids=inputs_shift, attention_mask=attn_shift)
             ref_logits = ref_out.logits
 
-        # 主损失（仅 y2 段）
+        # Main loss (y2 segment only)
         total, pol_loss, kl_loss = self._compute_y2_loss(logits, ref_logits, labels, loss_mask, advantages)
         loss = total
 
-        # 可选：一致性 KL（额外计算 π(·|x,y1) 的 teacher logits）
+        # Optional: consistency KL (compute π(·|x,y1) teacher logits)
         if self.config.use_consistency_kl:
             with torch.no_grad():
                 teacher_logits_xy1, full_xy1 = self._teacher_logits_xy1(prompts, drafts, y2_groups)
-            # 为对齐 y2 段：我们也构建 [x||y2] 的 logits（上面已有 logits），在同一 token 索引处做 KL
-            # 简化做法：对 labels==y2 的位置逐 token 做 KL(p_x || p_xy1)
+            # For aligning y2 segment: KL(p_x || p_xy1) at token positions where labels==y2
             logp_x = F.log_softmax(logits, dim=-1)
             logp_xy1 = F.log_softmax(teacher_logits_xy1, dim=-1)  # teacher
             p_x = torch.exp(logp_x)
-            # KL(p_x || p_xy1) 仅在 loss_mask==1 的地方
+            # KL(p_x || p_xy1) only where loss_mask==1
             kl_cons_t = (p_x * (logp_x - logp_xy1)).sum(dim=-1) * loss_mask
             kl_cons = kl_cons_t.sum() / loss_mask.sum().clamp_min(1.0)
             loss = loss + self.config.consistency_kl_coef * kl_cons
         else:
             kl_cons = torch.tensor(0.0, device=self.model.device)
 
-        # 可选：负样本下压（在 [x||y1] 上，用 -λΔR）
+        # Optional: negative draft push (on [x||y1], using -λΔR)
         neg_loss = self._neg_push_loss(prompts, drafts, normed)
         if neg_loss is not None:
             loss = loss + neg_loss
 
-        # 反传与优化
+        # Backward and optimize
         self.optim.zero_grad()
         loss.backward()
         if self.max_norm > 0:

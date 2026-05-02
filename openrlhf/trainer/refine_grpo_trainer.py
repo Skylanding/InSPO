@@ -19,19 +19,19 @@ class RefineGRPOConfig:
                  num_drafts_per_prompt: int = 1,
                  num_refinements_per_draft: int = 4,
                  use_sequence_level_is: bool = True,
-                 use_refinement_advantage: bool = True,    # 使用细化优势 ΔR
+                 use_refinement_advantage: bool = True,    # use refinement advantage ΔR
                  clip_ratio: float = 0.2,                 # PPO clip ratio
                  kl_coef: float = 0.01,                   # KL penalty coefficient
                  scale_rewards: str = "group",            # {"group", "global", "none"}
                  importance_sampling_level: str = "sequence",  # {"sequence", "token"}
-                 kl_stable: bool = True,                  # 使用稳定的 KL 计算
+                 kl_stable: bool = True,                  # use stable KL computation
                  loss_type: str = "dr_grpo",              # {"dr_grpo", "ppo_clip"}
                  reward_clip_range: Tuple[float, float] = (-10.0, 10.0),
                  max_completion_length: int = 512,
                  do_sample: bool = True,
                  temperature: float = 1.0,
                  top_p: float = 0.9,
-                 gamma: float = 1.0):                     # 优势缩放因子
+                 gamma: float = 1.0):                     # advantage scaling factor
         self.draft_source = draft_source
         self.num_drafts_per_prompt = num_drafts_per_prompt
         self.num_refinements_per_draft = num_refinements_per_draft
@@ -128,7 +128,7 @@ class RefineGRPOTrainer(DPOTrainer):
         cut = enc['input_ids'].shape[1]
         texts = self.tokenizer.batch_decode(out[:, cut:], skip_special_tokens=True)
         B = len(prompts); D = self.config.num_drafts_per_prompt
-        # 目前我们只支持 D=1（可扩展为多草稿平均或topk）
+        # Currently only D=1 is supported
         drafts = [texts[i*D:(i+1)*D][0] for i in range(B)]
         return drafts
 
@@ -171,7 +171,7 @@ class RefineGRPOTrainer(DPOTrainer):
         ids_list, attn_list, mask_list, labels_list, adv_list = [], [], [], [], []
 
         for x, y1, y2s, ds in zip(prompts, drafts, y2_groups, deltas):
-            # 计算分界点（prompt + y1 的 token 长度）
+            # Compute boundary (prompt + y1 token length)
             px = self.tokenizer(x, return_tensors="pt", truncation=True, max_length=512).input_ids.shape[1]
             py1 = self.tokenizer(x + y1, return_tensors="pt", truncation=True,
                                  max_length=512 + self.config.max_completion_length).input_ids.shape[1]
@@ -184,7 +184,7 @@ class RefineGRPOTrainer(DPOTrainer):
                 attn = enc["attention_mask"].squeeze(0)
 
                 loss_mask = torch.zeros_like(ids)
-                start, end = py1, ids.numel()  # 仅 y2 段
+                start, end = py1, ids.numel()  # y2 segment only
                 if end > start:
                     loss_mask[start:end] = 1
 
@@ -197,11 +197,11 @@ class RefineGRPOTrainer(DPOTrainer):
         labels_full = pad_sequence(labels_list, batch_first=True, padding_value=pad_id).to(self.model.device)
         advantages = torch.tensor(adv_list, dtype=torch.float32, device=self.model.device)
 
-        # 自回归对齐：logits[:, :-1] vs labels[:, 1:]
+        # Autoregressive alignment: logits[:, :-1] vs labels[:, 1:]
         inputs_shift = input_ids[:, :-1]
         attn_shift = attention_mask[:, 1:]
         labels = labels_full[:, 1:]
-        loss_mask = loss_mask[:, 1:]  # 与 labels 对齐
+        loss_mask = loss_mask[:, 1:]  # align with labels
 
         return inputs_shift, attn_shift, labels, loss_mask, advantages
 
@@ -235,7 +235,7 @@ class RefineGRPOTrainer(DPOTrainer):
             adv = (advantages * self.config.gamma).unsqueeze(-1).expand_as(ratio)
             policy_loss = -(ratio * adv * loss_mask).sum() / active
 
-        # KL（仅 y2 段）
+        # KL (y2 segment only)
         p = torch.exp(logp)
         kl_t = (p * (logp - logq)).sum(dim=-1) * loss_mask
         if self.config.loss_type in ("dapo", "bnpo"):
@@ -253,21 +253,21 @@ class RefineGRPOTrainer(DPOTrainer):
     def train_step(self, batch: Dict[str, Any]) -> Dict[str, float]:
         self.model.train()
 
-        # 1) 读取 prompts
+        # 1) Read prompts
         if isinstance(batch, list) and "prompt" in batch[0]:
             prompts = [b["prompt"] for b in batch]
         elif "prompt" in batch:
             prompts = batch["prompt"]
-        elif "input_ids" in batch:  # 解码
+        elif "input_ids" in batch:  # decode
             prompts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in batch["input_ids"]]
         else:
             raise ValueError("Batch must contain 'prompt' or 'input_ids'.")
 
-        # 2) 生成 y1 & y2
+        # 2) Generate y1 & y2
         drafts = self._gen_drafts(prompts)                      # [B]
         y2_groups = self._gen_refinements(prompts, drafts)      # [B][G]
 
-        # 3) 评分 ΔR，并做组内标准化
+        # 3) Score ΔR and normalize within group
         deltas = self._compute_delta_rewards(prompts, drafts, y2_groups)  # [B][G]
         normed = []
         for ds in deltas:
@@ -276,7 +276,7 @@ class RefineGRPOTrainer(DPOTrainer):
                 m, s = arr.mean(), arr.std()
                 arr = (arr - m) / (s + 1e-8) if s > 0 else (arr - m)
             elif self.config.scale_rewards == "batch":
-                # 简版：回退为组内（如需全批次归一可在此收集再统一归一）
+                # Fallback to group normalization
                 m, s = arr.mean(), arr.std()
                 arr = (arr - m) / (s + 1e-8) if s > 0 else (arr - m)
             # clip
@@ -285,20 +285,20 @@ class RefineGRPOTrainer(DPOTrainer):
                 arr = np.clip(arr, lo, hi)
             normed.append(arr.tolist())
 
-        # 4) 打包 & 对齐（仅 y2 段计损）
+        # 4) Pack & align (loss on y2 segment only)
         inputs_shift, attn_shift, labels, loss_mask, advantages = self._pack_and_align(prompts, drafts, y2_groups, normed)
 
-        # 5) 前向（current & ref）
+        # 5) Forward (current & ref)
         out = self.model(sequences=inputs_shift, attention_mask=attn_shift, return_output=True)
         logits = out.logits
         with torch.no_grad():
             ref_out = self.ref_model(sequences=inputs_shift, attention_mask=attn_shift, return_output=True)
             ref_logits = ref_out.logits
 
-        # 6) y2-only 损失
+        # 6) y2-only loss
         loss, pol_loss, kl_loss = self._compute_y2_loss(logits, ref_logits, labels, loss_mask, advantages)
 
-        # 7) 反传
+        # 7) Backward
         self.optim.zero_grad()
         loss.backward()
         if self.max_norm > 0:
@@ -307,7 +307,7 @@ class RefineGRPOTrainer(DPOTrainer):
         if self.scheduler:
             self.scheduler.step()
 
-        # 8) 指标
+        # 8) Metrics
         mean_delta = float(np.mean([np.mean(g) for g in deltas])) if len(deltas) else 0.0
         return {
             "loss": loss.item(),
@@ -389,17 +389,17 @@ class RefineGRPOTrainer(DPOTrainer):
 
                 # Logging
                 if step % args.logging_steps == 0:
-                    # 检查梯度是否更新
+                    # Check gradient update
                     grad_norm = 0.0
                     for param in self.model.parameters():
                         if param.grad is not None:
                             grad_norm += param.grad.data.norm(2).item() ** 2
                     grad_norm = grad_norm ** 0.5
                     
-                    # 计算准确率 (简化版本)
+                    # Compute accuracy
                     acc = (logits > 0).float().mean().item()
                     
-                    # 准备日志字典
+                    # Prepare log dict
                     logs_dict = {
                         "loss": loss.item(),
                         "acc": acc,

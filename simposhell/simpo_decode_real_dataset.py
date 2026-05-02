@@ -8,27 +8,27 @@ import requests
 from datasets import load_dataset
 
 def load_ultrafeedback_prompts(max_prompts=None):
-    """加载真正的UltraFeedback数据集prompts"""
+    """Load UltraFeedback dataset prompts"""
     try:
-        print("正在从HuggingFace Hub加载UltraFeedback数据集...")
+        print("Loading UltraFeedback dataset from HuggingFace Hub...")
         
-        # 尝试加载真正的UltraFeedback数据集
+        # Load UltraFeedback dataset
         dataset = load_dataset("HuggingFaceH4/ultrafeedback_binarized", split="train_prefs")
         prompts = sorted(list(set(dataset['prompt'])))
         
-        print(f"成功加载UltraFeedback数据集: {len(prompts)} 个唯一prompts")
+        print(f"Loaded UltraFeedback dataset: {len(prompts)} unique prompts")
         
         if max_prompts and len(prompts) > max_prompts:
             prompts = prompts[:max_prompts]
-            print(f"限制到前 {max_prompts} 个prompts")
+            print(f"Limited to first {max_prompts} prompts")
         
         return prompts
         
     except Exception as e:
-        print(f"加载UltraFeedback数据集失败: {e}")
-        print("回退到测试prompts...")
+        print(f"Failed to load UltraFeedback dataset: {e}")
+        print("Falling back to test prompts...")
         
-        # 回退到测试prompts
+        # Fallback test prompts
         test_prompts = [
             "Write a Python function to calculate the factorial of a number.",
             "Explain the concept of machine learning in simple terms.",
@@ -45,7 +45,7 @@ def load_ultrafeedback_prompts(max_prompts=None):
         if max_prompts:
             test_prompts = test_prompts[:max_prompts]
         
-        print(f"使用测试prompts: {len(test_prompts)} 个")
+        print(f"Using test prompts: {len(test_prompts)}")
         return test_prompts
 
 parser = argparse.ArgumentParser(description='SimPO Decode with HuggingFace Transformers')
@@ -69,15 +69,15 @@ args = parser.parse_args()
 
 print(args)
 
-# 设置随机种子
+# Set random seed
 torch.manual_seed(args.seed)
 random.seed(args.seed)
 
-# 加载prompts
+# Load prompts
 prompts = load_ultrafeedback_prompts(args.max_prompts)
 
-# 初始化HuggingFace模型和tokenizer
-print(f"正在加载模型: {args.model}")
+# Initialize model and tokenizer
+print(f"Loading model: {args.model}")
 try:
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
@@ -87,22 +87,22 @@ try:
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     
-    # 设置pad_token
+    # Set pad_token
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    print("模型加载成功")
+    print("Model loaded successfully")
 except Exception as e:
-    print(f"模型加载失败: {e}")
+    print(f"Failed to load model: {e}")
     exit(1)
 
-# 生成响应
+# Generate responses
 output_data = []
-print(f"开始生成 {len(prompts)} 个响应...")
+print(f"Generating {len(prompts)} responses...")
 
 for i, prompt in enumerate(prompts):
     try:
-        # 准备输入
+        # Prepare input
         messages = [{'role': 'user', 'content': prompt}]
         input_ids = tokenizer.apply_chat_template(
             messages, 
@@ -110,18 +110,17 @@ for i, prompt in enumerate(prompts):
             add_generation_prompt=True
         ).to(model.device)
         
-        # 为了增加多样性，为每个prompt使用稍微不同的参数
+        # Slightly vary params per prompt for diversity
         current_temperature = args.temperature + random.uniform(-0.1, 0.1)
         current_top_p = args.top_p + random.uniform(-0.05, 0.05)
         
-        # 生成响应
+        # Generate
         with torch.no_grad():
-            # 创建attention mask来避免pad token问题
             attention_mask = torch.ones_like(input_ids)
             
             output_ids = model.generate(
                 input_ids,
-                attention_mask=attention_mask,  # 添加attention mask
+                attention_mask=attention_mask,
                 max_new_tokens=args.max_tokens,
                 temperature=max(0.1, current_temperature),
                 top_p=max(0.1, min(1.0, current_top_p)),
@@ -130,13 +129,13 @@ for i, prompt in enumerate(prompts):
                 num_return_sequences=1
             )
         
-        # 解码响应
+        # Decode response
         generated_text = tokenizer.decode(
             output_ids[0, input_ids.shape[-1]:], 
             skip_special_tokens=True
         )
         
-        # 获取格式化的prompt
+        # Get formatted prompt
         format_prompt = tokenizer.apply_chat_template(
             messages, 
             tokenize=False, 
@@ -150,18 +149,18 @@ for i, prompt in enumerate(prompts):
         })
         
         if (i + 1) % 100 == 0:
-            print(f"完成 {i+1}/{len(prompts)}")
+            print(f"Completed {i+1}/{len(prompts)}")
         
     except Exception as e:
-        print(f"生成第{i+1}个响应时出错: {e}")
-        # 添加一个默认响应
+        print(f"Error generating response {i+1}: {e}")
+        # Add default response on error
         output_data.append({
             'prompt': prompt,
             "format_prompt": f"User: {prompt}\nAssistant:",
             'generated_text': f"Error generating response for: {prompt[:50]}...",
         })
 
-# 保存输出
+# Save output
 output_file = f'output_{args.seed}.json'
 if not os.path.exists(args.output_dir):
     os.makedirs(args.output_dir)
@@ -169,5 +168,5 @@ if not os.path.exists(args.output_dir):
 with open(os.path.join(args.output_dir, output_file), 'w') as f:
     json.dump(output_data, f, indent=4)
 
-print(f"输出已保存到: {os.path.join(args.output_dir, output_file)}")
-print(f"生成了 {len(output_data)} 个响应")
+print(f"Output saved to: {os.path.join(args.output_dir, output_file)}")
+print(f"Generated {len(output_data)} responses")

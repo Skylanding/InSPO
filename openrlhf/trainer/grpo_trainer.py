@@ -197,15 +197,13 @@ class GRPOTrainer:
     
     def _initialize_reward_functions(self):
         """
-        根据配置初始化奖励函数
+        Initialize reward functions based on configuration.
         
         Returns:
-            List: 奖励函数列表
+            List: Reward function list
         """
-        # 获取奖励模式，默认为 code
         reward_mode = getattr(self.config, 'reward_function', 'hardware_verification')
         
-        # 使用奖励函数工厂创建奖励函数
         try:
             from .reward_factory import RewardFactory
             return RewardFactory.create_reward_functions(reward_mode)

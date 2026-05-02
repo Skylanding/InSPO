@@ -1,8 +1,8 @@
 """
 Multi-Turn GRPO Trainer
 
-基于现有 GRPO 训练器的多回合生成↔验证训练器
-实现 Gen₁→Ver₁→Gen₂→Ver₂→... 的多回合训练机制
+Multi-turn generation↔verification trainer based on existing GRPO trainer.
+Implements Gen₁→Ver₁→Gen₂→Ver₂→... multi-turn training mechanism.
 """
 
 import math
@@ -19,47 +19,47 @@ from .grpo_trainer import GRPOTrainer, GRPOConfig
 
 @dataclass
 class MultiTurnGRPOConfig(GRPOConfig):
-    """多回合 GRPO 配置"""
-    # 多回合参数
-    max_train_turns: int = 3  # 训练最多回合数（Gen/Ver 各算一回合）
-    max_infer_turns: int = 6  # 推理可扩深
+    """Multi-turn GRPO configuration"""
+    # Multi-turn parameters
+    max_train_turns: int = 3  # Max training turns (Gen/Ver each counts as one turn)
+    max_infer_turns: int = 6  # Inference max depth
     use_turn_aware_advantage: bool = True  # Turn-Aware PPO
-    gen_abs_weight: float = 0.0  # r_abs 权重（论文默认 0）
-    gen_imp_weight: float = 1.0  # r_imp 权重（论文默认 1）
-    ver_weight: float = 1.0  # 验证回合权重
-    stop_when_pass_1: bool = True  # 通过率=1 提前停止
+    gen_abs_weight: float = 0.0  # r_abs weight (default 0 in paper)
+    gen_imp_weight: float = 1.0  # r_imp weight (default 1 in paper)
+    ver_weight: float = 1.0  # Verification turn weight
+    stop_when_pass_1: bool = True  # Early stop when pass rate = 1
     
-    # Monte Carlo 合并（简单拷贝标量回合回报到该回合所有 token）
+    # Monte Carlo merging (copy scalar turn return to all tokens in turn)
     gamma: float = 1.0
     lam: float = 1.0
     
-    # 行为策略 & 参考策略
-    use_old_model_snapshot: bool = True  # PPO 分母：显式旧策略快照
-    old_model_sync_frequency: int = 4  # 每N步同步old_model
+    # Behavior policy & reference policy
+    use_old_model_snapshot: bool = True  # PPO denominator: explicit old policy snapshot
+    old_model_sync_frequency: int = 4  # Sync old_model every N steps
 
 
 class MultiTurnGRPOTrainer(GRPOTrainer):
     """
-    多回合 GRPO 训练器
+    Multi-turn GRPO trainer.
     
-    基于现有 GRPO 训练器，扩展支持多回合生成↔验证训练
+    Extends existing GRPO trainer to support multi-turn generation↔verification training.
     """
     
     def __init__(self, model, ref_model, tokenizer, config: MultiTurnGRPOConfig, strategy=None, **kwargs):
         """
-        初始化多回合 GRPO 训练器
+        Initialize multi-turn GRPO trainer.
         
         Args:
-            model: 主模型
-            ref_model: 参考模型
-            tokenizer: 分词器
-            config: 多回合 GRPO 配置
-            strategy: 训练策略
+            model: Main model
+            ref_model: Reference model
+            tokenizer: Tokenizer
+            config: Multi-turn GRPO configuration
+            strategy: Training strategy
         """
-        # 使用父类初始化，但使用多回合配置
+        # Initialize parent class with multi-turn config
         super().__init__(model, ref_model, tokenizer, config, strategy, **kwargs)
         
-        # 多回合特定初始化
+        # Multi-turn specific initialization
         self.multiturn_config = config
         self.turn_tags = {
             "gen_open": "<GEN>\n",
@@ -70,15 +70,15 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
             "tool_feedback_close": "</TOOL>\n",
         }
         
-        # 回合计数器
+        # Turn counter
         self.turn_count = 0
         
     def rollout_turns(self, prompts: List[str]) -> List[List[Dict[str, Any]]]:
         """
-        多回合生成↔验证 rollout
+        Multi-turn generation↔verification rollout.
         
         Returns:
-            List[List[Dict]]: 每个 prompt 的回合序列
+            List[List[Dict]]: Turn sequence for each prompt
             turns[p] = [
                 {"type":"gen","segment":"…y_gen1…","pass_before":0.0,"pass_after":p1},
                 {"type":"ver","segment":"…y_ver1…","pass_before":p1,"pass_after":p1'},
@@ -90,7 +90,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
         
         for x in prompts:
             ctx = f"User:\n{x}\n\n"
-            pass_hist = []  # 仅存 Gen 回合后的 passrate (用于 improvement)
+            pass_hist = []  # Store passrate after Gen turns only (for improvement)
             turns = []
             
             for k in range(self.multiturn_config.max_train_turns):
@@ -103,7 +103,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
                 )
                 ctx += self.turn_tags["gen_open"] + yk + self.turn_tags["gen_close"]
                 
-                # 执行器：生成/复用测试 + 运行，得到 passrate_k
+                # Executor: generate/reuse tests + run, get passrate_k
                 pr_k, tool_fb = self._evaluate_and_feedback(x, ctx, yk, turn=f"gen_{k+1}")
                 turns.append(dict(
                     type="gen", 
@@ -126,7 +126,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
                 )
                 ctx += self.turn_tags["ver_open"] + vk + self.turn_tags["ver_close"]
                 
-                # 验证回合：产测试（或解释）+ 执行得到本回合有效通过率
+                # Verification turn: produce tests (or explanation) + execute to get pass rate
                 prk_ver, tool_fb2 = self._evaluate_and_feedback(
                     x, ctx, vk, turn=f"ver_{k+1}", is_verification=True
                 )
@@ -144,13 +144,13 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
     
     def compute_turn_rewards(self, turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        计算回合级奖励
+        Compute turn-level rewards.
         
         Args:
-            turns: 单个 prompt 的回合列表
+            turns: Turn list for a single prompt
             
         Returns:
-            更新了 reward_scalar 的回合列表
+            Turn list with updated reward_scalar
         """
         abs_w, imp_w = self.multiturn_config.gen_abs_weight, self.multiturn_config.gen_imp_weight
         gen_pass_hist = []
@@ -166,7 +166,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
                 r = float(t["pass_after"])
                 t["reward_scalar"] = self.multiturn_config.ver_weight * r
         
-        # Turn-aware 回注：把 Gen_k 的奖励也加到 Ver_{k-1}
+        # Turn-aware backfill: add Gen_k reward to Ver_{k-1}
         if self.multiturn_config.use_turn_aware_advantage:
             for i, t in enumerate(turns):
                 if t["type"] == "gen":
@@ -178,7 +178,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
     
     def prepare_turn_batch(self, prompts: List[str], all_turns: List[List[Dict[str, Any]]]) -> Tuple:
         """
-        为所有 prompt 的所有回合构建训练样本
+        Build training samples for all turns of all prompts.
         
         Returns:
             input_ids, attention_mask, loss_mask, labels, advantages
@@ -191,13 +191,13 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
             ctx_left = f"User:\n{x}\n\n"
             
             for t in turns:
-                # 1) 构建上下文 + 当前回合段（严格角色化）
+                # 1) Build context + current turn segment
                 if t["type"] == "gen":
                     seg_open, seg_close = self.turn_tags["gen_open"], self.turn_tags["gen_close"]
                 else:
                     seg_open, seg_close = self.turn_tags["ver_open"], self.turn_tags["ver_close"]
                 
-                # 输入 = (ctx_left + seg_open) → 生成 seg → seg_close 只出现在 labels
+                # Input = (ctx_left + seg_open) -> generate seg -> seg_close only in labels
                 inp_text = ctx_left + seg_open
                 seg_text = t["segment"]
                 full_text = inp_text + seg_text + seg_close
@@ -208,7 +208,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
                 start = ids_inp.numel()
                 end = start + self.tokenizer(seg_text, add_special_tokens=False, return_tensors="pt").input_ids[0].numel()
                 
-                # 左截断以适应 MAX
+                # Left-truncate to fit MAX
                 if ids_full.numel() > MAX:
                     cut = ids_full.numel() - MAX
                     ids_full = ids_full[cut:]
@@ -225,7 +225,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
                 mask_list.append(loss_mask)
                 adv_list.append(float(t["reward_scalar"]))
                 
-                # 2) 更新 ctx_left：把"当前回合完整段"并上 TOOL 反馈
+                # 2) Update ctx_left: append current turn segment with TOOL feedback
                 ctx_left = full_text
                 if t.get("tool_feedback"):
                     ctx_left += (self.turn_tags["tool_feedback_open"] + 
@@ -254,32 +254,32 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
     
     def train_step(self, prompts: List[str]) -> Dict[str, Any]:
         """
-        多回合训练步骤
+        Multi-turn training step.
         
         Args:
-            prompts: 输入提示列表
+            prompts: List of input prompts
             
         Returns:
-            训练指标字典
+            Training metrics dict
         """
-        # 1) rollout 多回合
+        # 1) Rollout multi-turn
         all_turns = self.rollout_turns(prompts)
         
-        # 2) 回合级奖励
+        # 2) Turn-level rewards
         all_turns = [self.compute_turn_rewards(t) for t in all_turns]
         
-        # 3) 构建回合段样本
+        # 3) Build turn segment samples
         batch = self.prepare_turn_batch(prompts, all_turns)
         
-        # 4) 计算损失（使用父类的 compute_refinement_loss）
+        # 4) Compute loss (using parent's compute_refinement_loss)
         loss_dict = self.compute_refinement_loss(*batch)
         loss_dict["total_loss"].backward()
         
-        # 5) 同步 old_model
+        # 5) Sync old_model
         if self.step_count % self.multiturn_config.old_model_sync_frequency == 0:
             self._sync_old_model()
         
-        # 6) 统计
+        # 6) Statistics
         mean_adv = batch[-1].mean().item()
         return dict(
             total_loss=loss_dict["total_loss"].item(),
@@ -293,14 +293,14 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
     
     def inference(self, prompts: List[str], max_new_tokens: int = 256) -> List[str]:
         """
-        多回合推理（Test-time scaling）
+        Multi-turn inference (test-time scaling).
         
         Args:
-            prompts: 输入提示列表
-            max_new_tokens: 最大新token数
+            prompts: List of input prompts
+            max_new_tokens: Max new tokens
             
         Returns:
-            生成的响应列表
+            List of generated responses
         """
         responses = []
         
@@ -329,7 +329,7 @@ class MultiTurnGRPOTrainer(GRPOTrainer):
                     x, ctx, vk, turn=f"ver_{k+1}", is_verification=True
                 )
                 
-                # tool 反馈可拼到 ctx，作为下轮提示
+                # Tool feedback can be appended to ctx as next turn prompt
                 ctx += (self.turn_tags["tool_feedback_open"] + tool_fb + tool_fb2 +
                        self.turn_tags["tool_feedback_close"])
             

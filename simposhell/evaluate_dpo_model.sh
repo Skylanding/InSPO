@@ -58,8 +58,8 @@ python -m openrlhf.cli.batch_inference \
     --bf16 \
     --flash_attn
 
-# Arena-Hard输出
-echo "生成Arena-Hard输出..."
+# Arena-Hard output
+echo "Generating Arena-Hard output..."
 python -m openrlhf.cli.batch_inference \
     --pretrain "$MODEL_PATH" \
     --dataset "$EVAL_DATASETS_DIR/arena_hard_data.json" \
@@ -72,8 +72,8 @@ python -m openrlhf.cli.batch_inference \
     --bf16 \
     --flash_attn
 
-# MT-Bench输出
-echo "生成MT-Bench输出..."
+# MT-Bench output
+echo "Generating MT-Bench output..."
 python -m openrlhf.cli.batch_inference \
     --pretrain "$MODEL_PATH" \
     --dataset "$EVAL_DATASETS_DIR/mt_bench_data.json" \
@@ -86,35 +86,35 @@ python -m openrlhf.cli.batch_inference \
     --bf16 \
     --flash_attn
 
-echo "模型输出生成完成！"
+echo "Model output generation complete!"
 
-# 3. 运行评估
-echo "=== 运行评估 ==="
+# 3. Run evaluation
+echo "=== Running Evaluation ==="
 
-# 检查是否设置了OpenAI API密钥
+# Check if OpenAI API key is set
 if [ -z "$OPENAI_API_KEY" ]; then
-    echo "警告: 未设置OPENAI_API_KEY环境变量"
-    echo "请设置: export OPENAI_API_KEY=your_api_key"
-    echo "或者修改脚本中的API密钥"
-    echo "跳过需要API的评估..."
+    echo "Warning: OPENAI_API_KEY not set"
+    echo "Please set: export OPENAI_API_KEY=your_api_key"
+    echo "Or modify the API key in the script"
+    echo "Skipping evaluations that require API..."
 else
-    # AlpacaEval评估
-    echo "运行AlpacaEval评估..."
+    # AlpacaEval evaluation
+    echo "Running AlpacaEval evaluation..."
     alpaca_eval \
         --model_outputs "$OUTPUT_DIR/alpacaeval_outputs.json" \
         --annotators_config "weighted_alpaca_eval_gpt4_turbo" \
         --reference_outputs "$EVAL_DATASETS_DIR/alpacaeval_data.json" \
         --output_path "$OUTPUT_DIR/alpacaeval_results"
     
-    # Arena-Hard评估
-    echo "运行Arena-Hard评估..."
+    # Arena-Hard evaluation
+    echo "Running Arena-Hard evaluation..."
     python -m arena_hard.evaluate \
         --model_outputs "$OUTPUT_DIR/arena_hard_outputs.json" \
         --reference_outputs "$EVAL_DATASETS_DIR/arena_hard_data.json" \
         --output_path "$OUTPUT_DIR/arena_hard_results"
     
-    # MT-Bench评估
-    echo "运行MT-Bench评估..."
+    # MT-Bench evaluation
+    echo "Running MT-Bench evaluation..."
     python -m mt_bench.evaluate \
         --model_outputs "$OUTPUT_DIR/mt_bench_outputs.json" \
         --reference_outputs "$EVAL_DATASETS_DIR/mt_bench_data.json" \
@@ -122,15 +122,15 @@ else
 fi
 
 echo ""
-echo "=== 评估完成 ==="
-echo "所有结果保存在: $OUTPUT_DIR"
+echo "=== Evaluation Complete ==="
+echo "All results saved in: $OUTPUT_DIR"
 echo ""
-echo "结果文件："
+echo "Result files:"
 echo "- AlpacaEval: $OUTPUT_DIR/alpacaeval_results"
 echo "- Arena-Hard: $OUTPUT_DIR/arena_hard_results"
 echo "- MT-Bench: $OUTPUT_DIR/mt_bench_results"
 echo ""
-echo "模型输出文件："
+echo "Model output files:"
 echo "- AlpacaEval: $OUTPUT_DIR/alpacaeval_outputs.json"
 echo "- Arena-Hard: $OUTPUT_DIR/arena_hard_outputs.json"
 echo "- MT-Bench: $OUTPUT_DIR/mt_bench_outputs.json"

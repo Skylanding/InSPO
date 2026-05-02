@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-SFT模型和数据集下载配置脚本
-自动下载RTO的SFT模型和UltraFeedback数据集，并转换为OpenRLHF格式
+Download SFT model and UltraFeedback dataset, convert to OpenRLHF format.
 """
 
 import os
@@ -14,32 +13,22 @@ import torch
 
 
 def download_sft_model(model_name="OpenRLHF/Llama-3-8b-sft-mixture", save_dir="./models"):
-    """
-    下载SFT模型
-    
-    Args:
-        model_name: 模型名称
-        save_dir: 保存目录
-    """
-    print(f"正在下载SFT模型: {model_name}")
-    
-    # 创建保存目录
+    """Download SFT model to save_dir."""
+    print(f"Downloading SFT model: {model_name}")
+
     os.makedirs(save_dir, exist_ok=True)
-    # 使用Princeton前缀避免覆盖原有模型
     model_path = os.path.join(save_dir, f"Princeton_{model_name.split('/')[-1]}")
-    
+
     if os.path.exists(model_path):
-        print(f"✅ 模型已存在: {model_path}")
+        print(f"Model already exists: {model_path}")
         return model_path
-    
+
     try:
-        # 下载tokenizer
-        print("下载tokenizer...")
+        print("Downloading tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.save_pretrained(model_path)
-        
-        # 下载模型（仅下载配置，不下载权重以节省时间）
-        print("下载模型配置...")
+
+        print("Downloading model...")
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
@@ -47,82 +36,57 @@ def download_sft_model(model_name="OpenRLHF/Llama-3-8b-sft-mixture", save_dir=".
             trust_remote_code=True
         )
         model.save_pretrained(model_path)
-        
-        print(f"✅ SFT模型下载完成: {model_path}")
+
+        print(f"SFT model saved to: {model_path}")
         return model_path
-        
+
     except Exception as e:
-        print(f"❌ SFT模型下载失败: {e}")
+        print(f"SFT model download failed: {e}")
         return None
 
 
 def download_ultrafeedback_dataset(dataset_name="princeton-nlp/llama3-ultrafeedback-armorm", save_dir="./data"):
-    """
-    下载Llama3-UltraFeedback-ArmoRM数据集
-    
-    Args:
-        dataset_name: 数据集名称
-        save_dir: 保存目录
-    """
-    print(f"正在下载Llama3-UltraFeedback-ArmoRM数据集: {dataset_name}")
-    
-    # 创建保存目录
+    """Download Llama3-UltraFeedback-ArmoRM dataset to save_dir."""
+    print(f"Downloading dataset: {dataset_name}")
+
     os.makedirs(save_dir, exist_ok=True)
-    
+
     try:
-        # 下载数据集 - 使用train split
         dataset = load_dataset(dataset_name, split="train")
-        print(f"✅ 数据集下载完成，包含 {len(dataset)} 个样本")
-        
-        # 保存到本地 - 使用Princeton前缀避免覆盖原有数据
+        print(f"Dataset downloaded: {len(dataset)} samples")
+
         dataset_path = os.path.join(save_dir, "Princeton_llama3_ultrafeedback_armorm")
         dataset.save_to_disk(dataset_path)
-        print(f"✅ 数据集保存到: {dataset_path}")
-        
+        print(f"Dataset saved to: {dataset_path}")
+
         return dataset_path
-        
+
     except Exception as e:
-        print(f"❌ 数据集下载失败: {e}")
+        print(f"Dataset download failed: {e}")
         return None
 
 
 def convert_to_openrlhf_format(dataset_path, output_file, max_samples=None):
-    """
-    转换为OpenRLHF DPO格式
-    
-    Args:
-        dataset_path: 数据集路径
-        output_file: 输出文件
-        max_samples: 最大样本数
-    """
-    print("转换为OpenRLHF DPO格式...")
-    
+    """Convert dataset at dataset_path to OpenRLHF DPO JSONL format."""
+    print("Converting to OpenRLHF DPO format...")
+
     try:
-        # 直接从磁盘加载数据集
         from datasets import load_from_disk
         dataset = load_from_disk(dataset_path)
-        
+
         dpo_data = []
         sample_count = 0
-        
+
         for sample in dataset:
             if max_samples and sample_count >= max_samples:
                 break
-                
-            # Llama3-UltraFeedback-ArmoRM数据集的格式：
-            # - prompt: 用户输入
-            # - chosen: 更好的回答（对话格式）
-            # - rejected: 较差的回答（对话格式）
-            
+
             if 'prompt' in sample and 'chosen' in sample and 'rejected' in sample:
-                # 提取prompt（用户消息）
                 prompt = sample['prompt']
-                
-                # 提取chosen和rejected的assistant回复
+
                 chosen_response = ""
                 rejected_response = ""
-                
-                # 处理chosen回复 - 新数据集使用对话格式
+
                 if isinstance(sample['chosen'], list):
                     for msg in sample['chosen']:
                         if msg.get('role') == 'assistant':
@@ -130,8 +94,7 @@ def convert_to_openrlhf_format(dataset_path, output_file, max_samples=None):
                             break
                 else:
                     chosen_response = str(sample['chosen'])
-                
-                # 处理rejected回复 - 新数据集使用对话格式
+
                 if isinstance(sample['rejected'], list):
                     for msg in sample['rejected']:
                         if msg.get('role') == 'assistant':
@@ -139,10 +102,8 @@ def convert_to_openrlhf_format(dataset_path, output_file, max_samples=None):
                             break
                 else:
                     rejected_response = str(sample['rejected'])
-                
-                # 验证数据有效性
+
                 if chosen_response and rejected_response and chosen_response != rejected_response:
-                    # 创建DPO格式样本
                     dpo_sample = {
                         'prompt': prompt,
                         'chosen': chosen_response,
@@ -151,36 +112,28 @@ def convert_to_openrlhf_format(dataset_path, output_file, max_samples=None):
                     dpo_data.append(dpo_sample)
                     sample_count += 1
                 else:
-                    print(f"跳过无效样本 {sample_count}: chosen和rejected相同或为空")
+                    print(f"Skipping invalid sample {sample_count}: chosen/rejected identical or empty")
                     continue
-                
+
             else:
-                print(f"跳过格式不匹配的样本: {sample.keys()}")
+                print(f"Skipping sample with unexpected keys: {sample.keys()}")
                 continue
-        
-        # 保存为JSONL格式
+
         with open(output_file, 'w', encoding='utf-8') as f:
             for sample in dpo_data:
                 f.write(json.dumps(sample, ensure_ascii=False) + '\n')
-        
-        print(f"✅ 转换完成，共 {len(dpo_data)} 个样本保存到: {output_file}")
+
+        print(f"Converted {len(dpo_data)} samples, saved to: {output_file}")
         return True
-        
+
     except Exception as e:
-        print(f"❌ 格式转换失败: {e}")
+        print(f"Format conversion failed: {e}")
         return False
 
 
 def create_config_file(model_path, dataset_path, output_dir="./config"):
-    """
-    创建OpenRLHF配置文件
-    
-    Args:
-        model_path: 模型路径
-        dataset_path: 数据集路径
-        output_dir: 输出目录
-    """
-    print("创建OpenRLHF配置文件...")
+    """Create OpenRLHF config JSON file."""
+    print("Creating OpenRLHF config...")
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -226,66 +179,62 @@ def create_config_file(model_path, dataset_path, output_dir="./config"):
     with open(config_file, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
     
-    print(f"✅ 配置文件保存到: {config_file}")
+    print(f"Config saved to: {config_file}")
     return config_file
 
 
 def main():
-    parser = argparse.ArgumentParser(description="下载和配置SFT模型和数据集")
+    parser = argparse.ArgumentParser(description="Download and configure SFT model and dataset")
     parser.add_argument("--model_name", type=str, default="OpenRLHF/Llama-3-8b-sft-mixture",
-                       help="SFT模型名称")
+                       help="SFT model name")
     parser.add_argument("--dataset_name", type=str, default="princeton-nlp/llama3-ultrafeedback-armorm",
-                       help="数据集名称")
+                       help="Dataset name")
     parser.add_argument("--model_dir", type=str, default="./models",
-                       help="模型保存目录")
+                       help="Model save directory")
     parser.add_argument("--data_dir", type=str, default="./data",
-                       help="数据保存目录")
+                       help="Data save directory")
     parser.add_argument("--config_dir", type=str, default="./config",
-                       help="配置保存目录")
+                       help="Config save directory")
     parser.add_argument("--max_samples", type=int, default=100000,
-                       help="最大样本数量")
+                       help="Max number of samples")
     parser.add_argument("--skip_model", action="store_true",
-                       help="跳过模型下载")
+                       help="Skip model download")
     parser.add_argument("--skip_dataset", action="store_true",
-                       help="跳过数据集下载")
+                       help="Skip dataset download")
     
     args = parser.parse_args()
     
     print("=" * 60)
-    print("SFT模型和数据集下载配置脚本")
+    print("SFT Model & Dataset Download Setup")
     print("=" * 60)
     
-    # 下载SFT模型
     model_path = None
     if not args.skip_model:
         model_path = download_sft_model(args.model_name, args.model_dir)
         if not model_path:
-            print("❌ SFT模型下载失败，退出")
+            print("SFT model download failed, exiting")
             return
-    
-    # 下载数据集
+
     dataset_path = None
     if not args.skip_dataset:
         dataset_path = download_ultrafeedback_dataset(args.dataset_name, args.data_dir)
         if not dataset_path:
-            print("❌ 数据集下载失败，退出")
+            print("Dataset download failed, exiting")
             return
-    
-    # 转换数据集格式
+
     if dataset_path:
         output_file = os.path.join(args.data_dir, "Princeton_llama3_ultrafeedback_armorm_dpo.jsonl")
         if not convert_to_openrlhf_format(dataset_path, output_file, args.max_samples):
-            print("❌ 数据集格式转换失败，退出")
+            print("Dataset conversion failed, exiting")
             return
-    
-    # 创建配置文件
+
     if model_path and dataset_path:
         config_file = create_config_file(model_path, output_file, args.config_dir)
-        print(f"✅ 配置完成！配置文件: {config_file}")
-    
+        print(f"Setup complete! Config: {config_file}")
+
     print("=" * 60)
-    print("🎉 所有配置完成！")
-    print("现在可以运行DPO训练:")
+    print("All done!")
+    print("Run DPO training:")
     print("bash train_dpo_rto_sft_improved.sh")
     print("=" * 60)
 

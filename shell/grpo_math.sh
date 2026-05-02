@@ -266,7 +266,7 @@ elif [ "$MODE" = "grpo" ]; then
         --do_sample \
         --temperature $TEMPERATURE \
         --top_p $TOP_P \
-        2>&1 | tee training.log | grep -E "(ERROR|Error|Exception|Traceback|Failed|KeyError|AttributeError|ImportError|ModuleNotFoundError|CUDA|GPU|memory|OOM|Success|完成|Finished|训练|Training|Epoch|Step|RefineGRPO|exits successfully)"
+        2>&1 | tee training.log | grep -E "(ERROR|Error|Exception|Traceback|Failed|KeyError|AttributeError|ImportError|ModuleNotFoundError|CUDA|GPU|memory|OOM|Success|Finished|Training|Epoch|Step|RefineGRPO|exits successfully)"
 else
     echo "Using RefineGRPO mode (using GRPO functionality in train_dpo)"
     
@@ -317,7 +317,7 @@ else
         --temperature $TEMPERATURE \
         --top_p $TOP_P \
         $WANDB_ARGS \
-        2>&1 | tee training.log | grep -E "(ERROR|Error|Exception|Traceback|Failed|KeyError|AttributeError|ImportError|ModuleNotFoundError|CUDA|GPU|memory|OOM|Success|完成|Finished|训练|Training|Epoch|Step|RefineGRPO|exits successfully)"
+        2>&1 | tee training.log | grep -E "(ERROR|Error|Exception|Traceback|Failed|KeyError|AttributeError|ImportError|ModuleNotFoundError|CUDA|GPU|memory|OOM|Success|Finished|Training|Epoch|Step|RefineGRPO|exits successfully)"
 fi
 
 # Check if training was successful
